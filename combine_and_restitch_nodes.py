@@ -56,10 +56,13 @@ class CombineImagesAndMask:
             "original_base_mask": base_mask,
         }
 
-        # Look, I'm not dealing with batch sizes AT ALL, I need to crop and scale based on masks and image sizes are not going to be the same
-        #   for each batch item, so I'll just accept only batch size 1 for now
-        if base_image.shape[0] != 1 or base_mask.shape[0] != 1 or reference_image.shape[0] != 1:
-            raise ValueError("Batch size must be 1")
+        # Mask should be a 1xHxW tensor, its contents affect image dimensions in the future so we cannot batch that
+        #   so we'll just accept only batch size 1 for now
+        if base_mask.shape[0] != 1:
+            raise ValueError("Mask batch size must be 1")
+        # Base image and reference image can be any batch size, but if both are not one, they need to be the same
+        if base_image.shape[0] != reference_image.shape[0] and base_image.shape[0] != 1 and reference_image.shape[0] != 1:
+            raise ValueError("Base image and reference image batch size must be the same or 1")
 
         # Find the minimum square covering the entirety of the masked area
         # Get mask as numpy array for processing
@@ -94,6 +97,12 @@ class CombineImagesAndMask:
         crop_y2 = center_y + half_size
         crop_x1 = center_x - half_size
         crop_x2 = center_x + half_size
+
+        # Unify batch dimensions by repeating the first dimenions
+        target_batch_size = max(base_image.shape[0], reference_image.shape[0])
+        if target_batch_size > 1:
+            base_image = base_image.repeat(target_batch_size // base_image.shape[0], 1, 1, 1)
+            reference_image = reference_image.repeat(target_batch_size // reference_image.shape[0], 1, 1, 1)
 
         # Overflow strategy Cap: Cap the boundaries to the image dimensions
         if scale_overflow_strategy == "cap":
@@ -157,12 +166,12 @@ class CombineImagesAndMask:
             # Use actual dimensions from both images
             canvas_height = reference_image.shape[1] + cropped_image.shape[1] + pixel_buffer
             canvas_width = max(reference_image.shape[2], cropped_image.shape[2])
-            combined_image = torch.ones((1, canvas_height, canvas_width, 3)) * 0.5
+            combined_image = torch.ones((base_image.shape[0], canvas_height, canvas_width, 3)) * 0.5
         elif orientation == "left":
             # Use actual dimensions from both images
             canvas_height = max(reference_image.shape[1], cropped_image.shape[1])
             canvas_width = reference_image.shape[2] + cropped_image.shape[2] + pixel_buffer
-            combined_image = torch.ones((1, canvas_height, canvas_width, 3)) * 0.5
+            combined_image = torch.ones((base_image.shape[0], canvas_height, canvas_width, 3)) * 0.5
 
         # Place reference image in top/left corner
         combined_image[:, :reference_image.shape[1], :reference_image.shape[2], :] = reference_image
@@ -176,7 +185,7 @@ class CombineImagesAndMask:
             combined_image[:, :cropped_image.shape[1], x_offset:x_offset + cropped_image.shape[2], :] = cropped_image
 
         # Create the combined mask canvas, black background
-        combined_mask = torch.zeros((1, canvas_height, canvas_width))
+        combined_mask = torch.zeros((base_image.shape[0], canvas_height, canvas_width))
         # Place the cropped mask in the bottom/right corner with proper offset
         if orientation == "top":
             y_offset = reference_image.shape[1] + pixel_buffer
@@ -248,7 +257,17 @@ class RestitchCropNode:
     CATEGORY = "Custom"
 
     def restitch(self, combined_image, restitch_data):
-        
+        original_base_image = restitch_data["original_base_image"]
+
+        # Step zero, batch size matching
+        #   If one size is one and the other is greater than one, repeat the smaller one to match the larger one
+        if combined_image.shape[0] == 1 and original_base_image.shape[0] > 1:
+            combined_image = combined_image.repeat(original_base_image.shape[0], 1, 1, 1)
+        elif combined_image.shape[0] > 1 and original_base_image.shape[0] == 1:
+            original_base_image = original_base_image.repeat(combined_image.shape[0], 1, 1, 1)
+            
+            
+
         # Step one, rescale the combined image and mask to the original size
         combined_image = combined_image.permute(0, 3, 1, 2)
         combined_image = torch.nn.functional.interpolate(combined_image, size=(restitch_data["original_combined_size"][0], restitch_data["original_combined_size"][1]), mode=restitch_data["interpolation_mode"])
@@ -256,20 +275,14 @@ class RestitchCropNode:
 
         # combined_mask = restitch_data["original_combined_mask"]
 
-        print(restitch_data["combined_crop_box"])
-
         # Step two, uncrop the base image from the combined image
         # Crop box: x1, y1, x2, y2
         cropped_base_image = combined_image[:, restitch_data["combined_crop_box"][1]:restitch_data["combined_crop_box"][3], restitch_data["combined_crop_box"][0]:restitch_data["combined_crop_box"][2], :]
         # cropped_base_mask = combined_mask[:, restitch_data["combined_crop_box"][1]:restitch_data["combined_crop_box"][3], restitch_data["combined_crop_box"][0]:restitch_data["combined_crop_box"][2]]
 
-        print(combined_image.shape)
-        print(cropped_base_image.shape)
-
         # Step three, handle padding for base cropping beyond original image dimensions
         # Crop box: x1, y1, x2, y2
 
-        print(restitch_data["base_crop_box"])
         crop_x1 = restitch_data["base_crop_box"][0]
         crop_y1 = restitch_data["base_crop_box"][1]
         crop_x2 = restitch_data["base_crop_box"][2]
@@ -286,24 +299,20 @@ class RestitchCropNode:
             # cropped_base_mask = cropped_base_mask[:, -crop_y1:, :]
             crop_y1 = 0
         # Right padding 
-        if crop_x2 > restitch_data["original_base_image"].shape[2]:
-            pad_size = crop_x2 - restitch_data["original_base_image"].shape[2]
+        if crop_x2 > original_base_image.shape[2]:
+            pad_size = crop_x2 - original_base_image.shape[2]
             cropped_base_image = cropped_base_image[:, :, :-pad_size, :]
             # cropped_base_mask = cropped_base_mask[:, :, :-pad_size]
-            crop_x2 = restitch_data["original_base_image"].shape[2]
+            crop_x2 = original_base_image.shape[2]
         # Bottom padding
-        if crop_y2 > restitch_data["original_base_image"].shape[1]:
-            pad_size = crop_y2 - restitch_data["original_base_image"].shape[1]
+        if crop_y2 > original_base_image.shape[1]:
+            pad_size = crop_y2 - original_base_image.shape[1]
             cropped_base_image = cropped_base_image[:, :-pad_size, :, :]
             # cropped_base_mask = cropped_base_mask[:, :-pad_size, :]
-            crop_y2 = restitch_data["original_base_image"].shape[1]
-
-        print(cropped_base_image.shape)
-        print(crop_x1, crop_y1, crop_x2, crop_y2)   
-
+            crop_y2 = original_base_image.shape[1]
 
         # Step four, uncrop the cropped base image into the original base image
-        expanded_cropped_base_image = torch.zeros((cropped_base_image.shape[0], restitch_data["original_base_image"].shape[1], restitch_data["original_base_image"].shape[2], 3))
+        expanded_cropped_base_image = torch.zeros((cropped_base_image.shape[0], original_base_image.shape[1], original_base_image.shape[2], 3))
         # expanded_cropped_base_mask = torch.zeros((1, restitch_data["original_base_image"].shape[1], restitch_data["original_base_image"].shape[2]))
 
         expanded_cropped_base_image[:, crop_y1:crop_y2, crop_x1:crop_x2, :] = cropped_base_image
@@ -314,7 +323,7 @@ class RestitchCropNode:
         # Mask dimensions: 1, H, W
         mask = restitch_data["original_base_mask"].unsqueeze(0).clone().permute(0, 2, 3, 1)
 
-        final_image = expanded_cropped_base_image * mask + restitch_data["original_base_image"] * (1 - mask)
+        final_image = expanded_cropped_base_image * mask + original_base_image * (1 - mask)
 
         return final_image, {}
 
