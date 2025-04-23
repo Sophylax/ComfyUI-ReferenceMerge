@@ -299,11 +299,11 @@ class RestitchCropNode:
             crop_y2 = restitch_data["original_base_image"].shape[1]
 
         print(cropped_base_image.shape)
-        print(crop_x1, crop_y1, crop_x2, crop_y2)
+        print(crop_x1, crop_y1, crop_x2, crop_y2)   
 
 
         # Step four, uncrop the cropped base image into the original base image
-        expanded_cropped_base_image = torch.zeros((1, restitch_data["original_base_image"].shape[1], restitch_data["original_base_image"].shape[2], 3))
+        expanded_cropped_base_image = torch.zeros((cropped_base_image.shape[0], restitch_data["original_base_image"].shape[1], restitch_data["original_base_image"].shape[2], 3))
         # expanded_cropped_base_mask = torch.zeros((1, restitch_data["original_base_image"].shape[1], restitch_data["original_base_image"].shape[2]))
 
         expanded_cropped_base_image[:, crop_y1:crop_y2, crop_x1:crop_x2, :] = cropped_base_image
