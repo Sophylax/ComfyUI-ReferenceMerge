@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torchvision.transforms.functional as F
 from PIL import Image, ImageOps
 
 class CombineImagesAndMask:
@@ -221,12 +222,14 @@ class CombineImagesAndMask:
 
         # Rescale the combined image and mask
         combined_image = combined_image.permute(0, 3, 1, 2)
-        combined_image = torch.nn.functional.interpolate(combined_image, size=(target_height, target_width), mode=interpolation_mode)
+        # combined_image = torch.nn.functional.interpolate(combined_image, size=(target_height, target_width), mode=interpolation_mode)
+        combined_image = F.resize(combined_image, size=(target_height, target_width), interpolation=resampler, antialias=True)
         combined_image = combined_image.permute(0, 2, 3, 1)
         
         # Add channel dimension for mask interpolation
         combined_mask = combined_mask.unsqueeze(1)  # Add channel dimension
-        combined_mask = torch.nn.functional.interpolate(combined_mask, size=(target_height, target_width), mode=interpolation_mode)
+        # combined_mask = torch.nn.functional.interpolate(combined_mask, size=(target_height, target_width), mode=interpolation_mode)
+        combined_mask = F.resize(combined_mask, size=(target_height, target_width), interpolation=resampler, antialias=True)
         combined_mask = combined_mask.squeeze(1)  # Remove channel dimension
 
         restitch_data["interpolation_mode"] = interpolation_mode
@@ -270,7 +273,8 @@ class RestitchCropNode:
 
         # Step one, rescale the combined image and mask to the original size
         combined_image = combined_image.permute(0, 3, 1, 2)
-        combined_image = torch.nn.functional.interpolate(combined_image, size=(restitch_data["original_combined_size"][0], restitch_data["original_combined_size"][1]), mode=restitch_data["interpolation_mode"])
+        combined_image = F.resize(combined_image, size=(restitch_data["original_combined_size"][0], restitch_data["original_combined_size"][1]), interpolation=resampler, antialias=True)
+        #combined_image = torch.nn.functional.interpolate(combined_image, size=(restitch_data["original_combined_size"][0], restitch_data["original_combined_size"][1]), mode=restitch_data["interpolation_mode"])
         combined_image = combined_image.permute(0, 2, 3, 1)
 
         # combined_mask = restitch_data["original_combined_mask"]
