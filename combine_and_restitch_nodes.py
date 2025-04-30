@@ -13,6 +13,7 @@ class CombineImagesAndMask:
         pixel_buffer (int): Pixel spacing between the base crop and the reference image.
         orientation (str): "left", "top", or "auto".
         matching_method (str): "scale" or "pad" when dims don't align.
+        resize (bool): Whether to resize the image to a target size.
         size_target (float): Target size in megapixels (Mpx).
         size_criteria (str): Which region to target: "base", "reference", or "total".
         crop_scale (float): Factor to expand the crop area.
@@ -34,6 +35,7 @@ class CombineImagesAndMask:
                 "pixel_buffer": ("INT", {"default": 10, "min": 0, "max": 1000, "step": 1}),
                 "orientation": (["auto", "left", "top"],),
                 "matching_method": (["scale", "pad"],),
+                "resize": ("BOOLEAN", {"default": True}),
                 "size_target": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 100.0, "step": 0.1}),
                 "size_criteria": (["base", "reference", "total"],),
                 "crop_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 10.0, "step": 0.1}),
@@ -200,18 +202,21 @@ class CombineImagesAndMask:
             restitch_data["combined_crop_box"] = [x_offset, 0, x_offset + cropped_mask.shape[2], cropped_mask.shape[1]]
 
         # Rescale the combined image and mask to the target size
-        if size_criteria == "base":
-            base_pixel_count = cropped_image.shape[1] * cropped_image.shape[2]
-            target_pixel_count = size_target * 1024 * 1024 # In megapixels
-            scale_factor = np.sqrt(target_pixel_count / base_pixel_count)
-        elif size_criteria == "reference":
-            reference_pixel_count = reference_image.shape[1] * reference_image.shape[2]
-            target_pixel_count = size_target * 1024 * 1024 # In megapixels
-            scale_factor = np.sqrt(target_pixel_count / reference_pixel_count)
-        elif size_criteria == "total":
-            total_pixel_count = combined_image.shape[1] * combined_image.shape[2]
-            target_pixel_count = size_target * 1024 * 1024 # In megapixels
-            scale_factor = np.sqrt(target_pixel_count / total_pixel_count)
+        if resize:
+            if size_criteria == "base":
+                base_pixel_count = cropped_image.shape[1] * cropped_image.shape[2]
+                target_pixel_count = size_target * 1024 * 1024 # In megapixels
+                scale_factor = np.sqrt(target_pixel_count / base_pixel_count)
+            elif size_criteria == "reference":
+                reference_pixel_count = reference_image.shape[1] * reference_image.shape[2]
+                target_pixel_count = size_target * 1024 * 1024 # In megapixels
+                scale_factor = np.sqrt(target_pixel_count / reference_pixel_count)
+            elif size_criteria == "total":
+                total_pixel_count = combined_image.shape[1] * combined_image.shape[2]
+                target_pixel_count = size_target * 1024 * 1024 # In megapixels
+                scale_factor = np.sqrt(target_pixel_count / total_pixel_count)
+        else:
+            scale_factor = 1.0
 
         restitch_data["original_combined_size"] = combined_image.shape[1:3]
         restitch_data["original_combined_mask"] = combined_mask
