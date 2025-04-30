@@ -19,6 +19,7 @@ class CombineImagesAndMask:
         crop_scale (float): Factor to expand the crop area.
         scale_overflow_strategy (str): "cap" or "extend".
         interpolation_mode (str): "nearest", "bilinear", or "bicubic".
+        repeat_base_image (bool): Whether to repeat the base image unmasked for base image
     Outputs:
         combined_image (IMAGE): Side-by-side combined image.
         combined_mask (IMAGE): Combined mask aligned with base crop.
@@ -41,6 +42,7 @@ class CombineImagesAndMask:
                 "crop_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 10.0, "step": 0.1}),
                 "scale_overflow_strategy": (["cap", "extend"],),
                 "interpolation_mode": (["nearest", "bilinear", "bicubic"],),
+                "repeat_base_image": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -49,8 +51,8 @@ class CombineImagesAndMask:
     CATEGORY = "Custom"
 
     def combine(self, base_image, base_mask, reference_image, pixel_buffer, orientation,
-                matching_method, size_target, size_criteria, crop_scale,
-                scale_overflow_strategy, interpolation_mode):
+                matching_method, resize, size_target, size_criteria, crop_scale,
+                scale_overflow_strategy, interpolation_mode, repeat_base_image):
         
         # Torch dimensions for images: B, H, W, C
         # Torch dimensions for masks: B, H, W
@@ -167,13 +169,13 @@ class CombineImagesAndMask:
         # Create the combined image canvas, grey background
         if orientation == "top":
             # Use actual dimensions from both images
-            canvas_height = reference_image.shape[1] + cropped_image.shape[1] + pixel_buffer
+            canvas_height = reference_image.shape[1] + (cropped_image.shape[1] + pixel_buffer) * (2 if repeat_base_image else 1)
             canvas_width = max(reference_image.shape[2], cropped_image.shape[2])
             combined_image = torch.ones((base_image.shape[0], canvas_height, canvas_width, 3)) * 0.5
         elif orientation == "left":
             # Use actual dimensions from both images
             canvas_height = max(reference_image.shape[1], cropped_image.shape[1])
-            canvas_width = reference_image.shape[2] + cropped_image.shape[2] + pixel_buffer
+            canvas_width = reference_image.shape[2] + (cropped_image.shape[2] + pixel_buffer) * (2 if repeat_base_image else 1)
             combined_image = torch.ones((base_image.shape[0], canvas_height, canvas_width, 3)) * 0.5
 
         # Place reference image in top/left corner
@@ -183,9 +185,13 @@ class CombineImagesAndMask:
         if orientation == "top":
             y_offset = reference_image.shape[1] + pixel_buffer
             combined_image[:, y_offset:y_offset + cropped_image.shape[1], :cropped_image.shape[2], :] = cropped_image
+            if repeat_base_image:
+                combined_image[:, y_offset + cropped_image.shape[1] + pixel_buffer:y_offset + cropped_image.shape[1] + pixel_buffer + base_image.shape[1], :base_image.shape[2], :] = base_image
         else:  # left orientation
             x_offset = reference_image.shape[2] + pixel_buffer
             combined_image[:, :cropped_image.shape[1], x_offset:x_offset + cropped_image.shape[2], :] = cropped_image
+            if repeat_base_image:
+                combined_image[:, :cropped_image.shape[1], x_offset + cropped_image.shape[2] + pixel_buffer:x_offset + cropped_image.shape[2] + pixel_buffer + base_image.shape[2], :base_image.shape[2], :] = base_image
 
         # Create the combined mask canvas, black background
         combined_mask = torch.zeros((base_image.shape[0], canvas_height, canvas_width))
